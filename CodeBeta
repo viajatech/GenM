@@ -1,0 +1,92 @@
+#Por David Ruiz
+#Puedes usar mi script siempre y cuando me des créditos en mis redes sociales @viajatech
+#pip install rdkit deap
+
+
+
+
+import random
+from rdkit import Chem
+from rdkit.Chem import Draw, Descriptors
+from deap import base, creator, tools, algorithms
+
+# Configuración del algoritmo genético
+creator.create("FitnessMax", base.Fitness, weights=(1.0,))
+creator.create("Individual", list, fitness=creator.FitnessMax)
+
+toolbox = base.Toolbox()
+toolbox.register("attr_smiles", lambda: "CCO")  # Ejemplo: etanol
+toolbox.register("individual", tools.initIterate, creator.Individual, toolbox.attr_smiles)
+toolbox.register("population", tools.initRepeat, list, toolbox.individual)
+
+# Función de aptitud (fitness): Evaluar la propiedad específica (peso molecular en este caso)
+def evaluate(individual):
+    smiles = individual[0]
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        return -1000.0,
+    return Descriptors.MolWt(mol),
+
+toolbox.register("mate", tools.cxTwoPoint)
+toolbox.register("mutate", tools.mutShuffleIndexes, indpb=0.05)
+toolbox.register("select", tools.selTournament, tournsize=3)
+toolbox.register("evaluate", evaluate)
+
+# Mutación: Agregar o eliminar un átomo al azar
+def mutate(individual):
+    mol = Chem.MolFromSmiles(individual[0])
+    if mol is None:
+        return individual,
+    num_atoms = mol.GetNumAtoms()
+    editable_mol = Chem.EditableMol(mol)
+    if random.random() < 0.5 and num_atoms > 1:
+        # Eliminar un átomo
+        atom_idx = random.randint(0, num_atoms - 1)
+        editable_mol.RemoveAtom(atom_idx)
+        new_mol = editable_mol.GetMol()
+    else:
+        # Agregar un átomo (carbono)
+        atom_idx = random.randint(0, num_atoms - 1)
+        atom = mol.GetAtomWithIdx(atom_idx)
+        atom_neighbors = atom.GetNeighbors()
+        if atom_neighbors:
+            bond_type = random.choice([Chem.rdchem.BondType.SINGLE, Chem.rdchem.BondType.DOUBLE])
+            editable_mol.AddAtom(Chem.Atom(6))  # Añadir un átomo de carbono
+            new_mol = editable_mol.GetMol()
+            new_atom_idx = new_mol.GetNumAtoms() - 1
+            editable_mol.AddBond(atom_idx, new_atom_idx, bond_type)
+            new_mol = editable_mol.GetMol()
+        else:
+            new_mol = editable_mol.GetMol()
+    individual[0] = Chem.MolToSmiles(new_mol)
+    return individual,
+
+toolbox.register("mutate", mutate)
+
+def main():
+    population = toolbox.population(n=50)
+    ngen = 40
+    cxpb = 0.5
+    mutpb = 0.2
+
+    for gen in range(ngen):
+        offspring = algorithms.varAnd(population, toolbox, cxpb, mutpb)
+        fits = list(map(toolbox.evaluate, offspring))
+        for fit, ind in zip(fits, offspring):
+            ind.fitness.values = fit
+        population = toolbox.select(offspring, k=len(population))
+    
+    best_ind = tools.selBest(population, k=1)[0]
+    print("Best individual is: %s\nwith fitness: %s" % (best_ind[0], best_ind.fitness.values))
+    
+    # Guardar la mejor molécula como imagen
+    best_mol = Chem.MolFromSmiles(best_ind[0])
+    img = Draw.MolToImage(best_mol)
+    img.save("best_molecule.png")
+    
+    # Guardar la mejor molécula en un archivo de texto
+    with open("best_molecule.txt", "w") as f:
+        f.write(best_ind[0])
+
+if __name__ == "__main__":
+    main()
