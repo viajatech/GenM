@@ -1,0 +1,145 @@
+#Por David Ruiz
+#Puedes usar mi script siempre y cuando me des créditos en mis redes sociales @viajatech
+#pip install rdkit deap
+
+
+import random
+import tkinter as tk
+from tkinter import simpledialog, messagebox
+from PIL import Image, ImageTk
+from rdkit import Chem
+from rdkit.Chem import Draw, Descriptors
+from deap import base, creator, tools, algorithms
+
+# Configuración del algoritmo genético
+creator.create("FitnessMax", base.Fitness, weights=(1.0,))
+creator.create("Individual", list, fitness=creator.FitnessMax)
+
+toolbox = base.Toolbox()
+
+# Función de aptitud (fitness): Evaluar la propiedad específica (peso molecular en este caso)
+def evaluate(individual):
+    smiles = individual[0]
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        return -1000.0,
+    return Descriptors.MolWt(mol),
+
+toolbox.register("evaluate", evaluate)
+
+# Cruce: Intercambiar subestructuras entre dos moléculas
+def mate(ind1, ind2):
+    mol1 = Chem.MolFromSmiles(ind1[0])
+    mol2 = Chem.MolFromSmiles(ind2[0])
+    if mol1 is None or mol2 is None:
+        return ind1, ind2
+    frag1_atoms = list(mol1.GetAromaticAtoms())
+    frag2_atoms = list(mol2.GetAromaticAtoms())
+    if not frag1_atoms or not frag2_atoms:
+        return ind1, ind2
+    frag1 = random.choice(frag1_atoms)
+    frag2 = random.choice(frag2_atoms)
+    combined_mol = Chem.RWMol(Chem.CombineMols(mol1, mol2))
+    combined_mol.RemoveBond(frag1.GetIdx(), frag2.GetIdx())
+    Chem.SanitizeMol(combined_mol)
+    new_smiles1 = Chem.MolToSmiles(combined_mol.GetMol())
+    new_smiles2 = Chem.MolToSmiles(combined_mol.GetMol())
+    ind1[0] = new_smiles1
+    ind2[0] = new_smiles2
+    return ind1, ind2
+
+# Mutación: Agregar o eliminar un átomo al azar
+def mutate(individual):
+    mol = Chem.MolFromSmiles(individual[0])
+    if mol is None:
+        return individual,
+    num_atoms = mol.GetNumAtoms()
+    editable_mol = Chem.EditableMol(mol)
+    if random.random() < 0.5 and num_atoms > 1:
+        # Eliminar un átomo
+        atom_idx = random.randint(0, num_atoms - 1)
+        editable_mol.RemoveAtom(atom_idx)
+        new_mol = editable_mol.GetMol()
+    else:
+        # Agregar un átomo (carbono)
+        atom_idx = random.randint(0, num_atoms - 1)
+        atom = mol.GetAtomWithIdx(atom_idx)
+        atom_neighbors = atom.GetNeighbors()
+        if atom_neighbors:
+            bond_type = random.choice([Chem.rdchem.BondType.SINGLE, Chem.rdchem.BondType.DOUBLE])
+            editable_mol.AddAtom(Chem.Atom(6))  # Añadir un átomo de carbono
+            new_mol = editable_mol.GetMol()
+            new_atom_idx = new_mol.GetNumAtoms() - 1
+            editable_mol.AddBond(atom_idx, new_atom_idx, bond_type)
+            new_mol = editable_mol.GetMol()
+        else:
+            new_mol = editable_mol.GetMol()
+    individual[0] = Chem.MolToSmiles(new_mol)
+    return individual,
+
+toolbox.register("mate", mate)
+toolbox.register("mutate", mutate)
+toolbox.register("select", tools.selTournament, tournsize=3)
+
+def run_ga(smiles):
+    def create_individual():
+        return creator.Individual([smiles])
+
+    toolbox.register("individual", create_individual)
+    toolbox.register("population", tools.initRepeat, list, toolbox.individual)
+
+    population = toolbox.population(n=50)
+    ngen = 40
+    cxpb = 0.5
+    mutpb = 0.2
+
+    for gen in range(ngen):
+        offspring = algorithms.varAnd(population, toolbox, cxpb, mutpb)
+        fits = list(map(toolbox.evaluate, offspring))
+        for fit, ind in zip(fits, offspring):
+            ind.fitness.values = fit
+        population = toolbox.select(offspring, k=len(population))
+
+    best_ind = tools.selBest(population, k=1)[0]
+    best_smiles = best_ind[0]
+    best_fitness = best_ind.fitness.values[0]
+
+    # Guardar la mejor molécula como imagen
+    best_mol = Chem.MolFromSmiles(best_smiles)
+    img = Draw.MolToImage(best_mol)
+    img.save("best_molecule.png")
+
+    # Guardar la mejor molécula en un archivo de texto
+    with open("best_molecule.txt", "w") as f:
+        f.write(best_smiles)
+
+    return best_smiles, best_fitness, "best_molecule.png"
+
+def start_ga():
+    initial_smiles = simpledialog.askstring("Input", "Ingrese la molécula inicial en formato SMILES:", parent=root)
+    if initial_smiles:
+        best_smiles, best_fitness, img_path = run_ga(initial_smiles)
+        result_text.set(f"Mejor molécula: {best_smiles}\nFitness: {best_fitness}")
+        img = Image.open(img_path)
+        img = ImageTk.PhotoImage(img)
+        result_img_label.config(image=img)
+        result_img_label.image = img
+
+# Crear la interfaz gráfica
+root = tk.Tk()
+root.title("Generador de Moléculas by Viaja Tech")
+
+frame = tk.Frame(root)
+frame.pack(pady=20)
+
+btn_start = tk.Button(frame, text="Iniciar Algoritmo Genético", command=start_ga)
+btn_start.pack(pady=10)
+
+result_text = tk.StringVar()
+result_label = tk.Label(frame, textvariable=result_text, justify=tk.LEFT)
+result_label.pack(pady=10)
+
+result_img_label = tk.Label(frame)
+result_img_label.pack(pady=10)
+
+root.mainloop()
